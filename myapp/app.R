@@ -1,15 +1,12 @@
 library(shiny)
 library(S7)
-#library(ggfittext)
 library(ggplot2)
+library(jsonlite)
+library(svglite)
 
 # Function definitions and static variables --------------------------------
 source("make-diagram.R")
 
-
-# if(!dir.exists("www")) dir.create("www")
-# addResourcePath("www", "www")
-# outfile <- tempfile(tmpdir = "www", fileext = ".pdf")
 license <- '<p xmlns:dct="http://purl.org/dc/terms/" xmlns:cc="http://creativecommons.org/ns#" class="license-text">This work is licensed under <a rel="license" href="https://creativecommons.org/licenses/by-nc-sa/4.0">CC BY-NC-SA 4.0<img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/cc.svg?ref=chooser-v1" /><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/by.svg?ref=chooser-v1" /><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/nc.svg?ref=chooser-v1" /><img style="height:22px!important;margin-left:3px;vertical-align:text-bottom;" src="https://mirrors.creativecommons.org/presskit/icons/sa.svg?ref=chooser-v1"/></a></p>'
 p0 <- paste0
 
@@ -96,6 +93,21 @@ make_index_inputs <- function(x) {
 # APP STARTS HERE ----------------------------------------------------------
 
 ui <- fluidPage(
+  tags$head(tags$script(HTML('
+    // On load, send saved state to Shiny
+    $(document).on("shiny:connected", function() {
+      var saved = localStorage.getItem("longdiag_state");
+      if (saved) {
+        Shiny.setInputValue("restore_state", saved);
+      }
+    });
+    
+    // Save state when Shiny sends it
+    Shiny.addCustomMessageHandler("save_state", function(state) {
+      localStorage.setItem("longdiag_state", JSON.stringify(state));
+    });
+  '))),
+
   # Application title
   titlePanel(
     "Diagrams for longitudinal study designs"
@@ -135,7 +147,8 @@ ui <- fluidPage(
               column(2, selectInput("aratio", "Aspect ratio", c("4:3" = 1, "16:9" = 2))),
               column(2, numericInput("textsize", "Text size", 14, min = 4, max = 32)),
               column(2, numericInput("xpad", "Padding (x-axis)", 50, min = 0, max = 300)),
-              column(2, br(), downloadButton("download_png", "Download .png"))  # replaces Build .pdf
+              column(2, br(), uiOutput("download_link")),
+              column(2, br(), uiOutput("download_link_svg"))
             )
           )
           
@@ -163,6 +176,82 @@ server <- function(input, output, session) {
   rownums <- reactiveVal(1)
   vnums   <- reactiveVal(1)
   
+  # Save state reactively (debounced to avoid thrashing)
+  observe({
+    state <- list(
+      rownums = rownums(),
+      vnums = vnums(),
+      textsize = input$textsize,
+      xpad = input$xpad,
+      aratio = input$aratio,
+      rows = lapply(seq_len(rownums()), function(x) list(
+        line      = input[[paste0("line", x)]],
+        lbl1      = input[[paste0("lbl1_", x)]],
+        lbl2      = input[[paste0("lbl2_", x)]],
+        start     = input[[paste0("start", x)]],
+        end       = input[[paste0("end", x)]],
+        start_lbl = input[[paste0("start_lbl", x)]],
+        end_lbl   = input[[paste0("end_lbl", x)]],
+        boxcolor  = input[[paste0("boxcolor", x)]],
+        outbox    = input[[paste0("outbox", x)]]
+      )),
+      indices = lapply(seq_len(vnums()), function(x) list(
+        indexlbl1 = input[[paste0("indexlbl1_", x)]],
+        indexlbl2 = input[[paste0("indexlbl2_", x)]],
+        index     = input[[paste0("index", x)]]
+      ))
+    )
+    session$sendCustomMessage("save_state", state)
+  }) |> debounce(1000) |> (\(x) observeEvent(x(), x()))()
+
+  observeEvent(input$restore_state, {
+  state <- jsonlite::fromJSON(input$restore_state, simplifyVector = FALSE)
+  
+  # Restore simple inputs
+  updateNumericInput(session, "textsize", value = state$textsize)
+  updateNumericInput(session, "xpad", value = state$xpad)
+  updateSelectInput(session, "aratio", selected = state$aratio)
+  
+  # Rebuild rows
+  n_rows <- length(state$rows)
+  if (n_rows > 1) {
+    for (i in 2:n_rows) {
+      insertUI(selector = paste0("#row", i - 1), where = "beforeBegin",
+               ui = make_row_inputs(i))
+    }
+    rownums(n_rows)
+  }
+  # Restore row values
+  for (x in seq_len(n_rows)) {
+    r <- state$rows[[x]]
+    updateNumericInput(session,  paste0("line", x),     value = r$line)
+    updateSelectInput(session,   paste0("lbl1_", x),    selected = r$lbl1)
+    updateTextInput(session,     paste0("lbl2_", x),    value = r$lbl2)
+    updateNumericInput(session,  paste0("start", x),    value = r$start)
+    updateNumericInput(session,  paste0("end", x),      value = r$end)
+    updateTextInput(session,     paste0("start_lbl", x),value = r$start_lbl)
+    updateTextInput(session,     paste0("end_lbl", x),  value = r$end_lbl)
+    updateNumericInput(session,  paste0("boxcolor", x), value = r$boxcolor)
+    updateSelectInput(session,   paste0("outbox", x),   selected = r$outbox)
+  }
+  
+  # Rebuild indices
+  n_idx <- length(state$indices)
+  if (n_idx > 1) {
+    for (i in 2:n_idx) {
+      insertUI(selector = paste0("#index", i - 1), where = "beforeBegin",
+               ui = make_index_inputs(i))
+    }
+    vnums(n_idx)
+  }
+  for (x in seq_len(n_idx)) {
+    idx <- state$indices[[x]]
+    updateSelectInput(session,  paste0("indexlbl1_", x), selected = idx$indexlbl1)
+    updateTextInput(session,    paste0("indexlbl2_", x), value = idx$indexlbl2)
+    updateNumericInput(session, paste0("index", x),      value = idx$index)
+  }
+}, once = TRUE)
+
 # Boxes -------------------------------------------
   observeEvent(input$add, {
     insertUI(
@@ -248,22 +337,38 @@ server <- function(input, output, session) {
 
   
   output$longdiag <- renderPlot(plt(), width = 700, height = 600*0.75)
+  output$download_link <- renderUI({
+    p <- plt()
+    tmp <- tempfile(fileext = ".pdf")
+    ggsave(tmp, plot = p,
+          width = if (input$aratio == 1) 16 else 16,
+          height = if (input$aratio == 1) 12 else 9,
+          units = "in", device = "pdf")
+    
+    img_data <- base64enc::base64encode(tmp)
+    href <- paste0("data:application/pdf;base64,", img_data)
+    
+    tags$a(href = href, download = "diagram.pdf",
+          class = "btn btn-default",
+          "Download .pdf")
+  })
+
+  output$download_link_svg <- renderUI({
+  p <- plt()
+  tmp <- tempfile(fileext = ".svg")
+  ggsave(tmp, plot = p,
+         width = if (input$aratio == 1) 16 else 16,
+         height = if (input$aratio == 1) 12 else 9,
+         units = "in", device = "svg")
   
-  output$download_png <- downloadHandler(
-  filename = function() "diagram.png",
-  content = function(file) {
-    if (input$aratio == 1) {
-      wdth <- 16; hght <- 12
-    } else {
-      wdth <- 16; hght <- 9
-    }
-    plt_out <- gen_long_diag(ggdf(), indf(),
-                             txt_size = input$textsize,
-                             addpad = input$xpad)
-    ggsave(file, plot = plt_out, width = wdth, height = hght,
-           units = "in", dpi = 150, device = "png")
-  }
-  )
+  img_data <- base64enc::base64encode(tmp)
+  href <- paste0("data:image/svg+xml;base64,", img_data)
+  
+  tags$a(href = href, download = "diagram.svg",
+         class = "btn btn-default",
+         "Download .svg")
+})
+
 }
 
 # Run the application 
