@@ -1,3 +1,7 @@
+
+# About this app
+This is a small modification to work done by Lars Christian Lund, original work is available at https://source.coderefinery.org/lcl/repeat-diagrams.
+
 # Setup instruction for Shiny application to generate longitdunal design diagrams
 
 Prerequisites:
