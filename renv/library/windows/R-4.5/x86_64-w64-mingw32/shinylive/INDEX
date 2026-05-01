@@ -1,0 +1,5 @@
+assets_download         Manage shinylive assets
+assets_install_copy     Install shinylive assets from from a local
+                        directory
+export                  Export a Shiny app to a directory
+quarto_ext              Quarto extension for shinylive

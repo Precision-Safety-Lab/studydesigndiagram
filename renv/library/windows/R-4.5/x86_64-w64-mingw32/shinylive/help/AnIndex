@@ -1,0 +1,12 @@
+shinylive-package	shinylive-package
+assets_cleanup	assets
+assets_download	assets
+assets_ensure	assets
+assets_info	assets
+assets_install_copy	install
+assets_install_link	install
+assets_remove	assets
+assets_version	assets
+export	export
+quarto_ext	quarto_ext
+shinylive	shinylive-package

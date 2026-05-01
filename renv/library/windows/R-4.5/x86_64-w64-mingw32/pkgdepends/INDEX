@@ -1,0 +1,42 @@
+as_pkg_dependencies     Shorthands for dependency specifications
+current_r_platform      R platforms
+install_package_plan    Perform a package installation plan
+install_plans           Installation plans
+is_valid_package_name   Check whether a package name is valid
+lib_status              Status of packages in a library
+new_pkg_deps            R6 class for package dependency lookup
+new_pkg_download_proposal
+                        R6 class for package downloads
+new_pkg_installation_plan
+                        R6 class for installation from a lock file
+new_pkg_installation_proposal
+                        R6 class for package download and installation.
+parse_pkg_refs          Parse package location references
+pkg_config              pkgdepends configuration
+pkg_dep_types_hard      Possible package dependency types
+pkg_downloads           Package downloads
+pkg_name_check          Check if an R package name is available.
+pkg_refs                Package references
+pkg_resolution          Dependency resolution
+pkg_rx                  A set of handy regular expressions related to R
+                        packages
+pkg_solution            The dependency solver
+pkgdepends-package      pkgdepends: Package Dependency Resolution and
+                        Downloads
+scan_deps               Scan R code for dependent packages
+sysreqs_check_installed
+                        Check if installed packages have all their
+                        system requirements
+sysreqs_db_list         List contents of the system requirements DB,
+                        for a platform
+sysreqs_db_match        Match system requirement descriptions to the
+                        database
+sysreqs_db_update       Update the cached copy of the system
+                        requirements database
+sysreqs_install_plan    Create an installation plan for system
+                        requirements
+sysreqs_is_supported    Check if a platform has system requirements
+                        support
+sysreqs_list_system_packages
+                        List installed system packages
+sysreqs_platforms       List platforms with system requirements support

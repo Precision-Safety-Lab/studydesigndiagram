@@ -1,0 +1,35 @@
+bioc_version            Query Bioconductor version information
+cran_archive_cache      Cache for CRAN archive data
+cran_archive_list       Data about older versions of CRAN packages
+cranlike_metadata_cache
+                        Metadata cache for a CRAN-like repository
+current_r_platform      R platforms
+default_cran_mirror     Query the default CRAN repository for this
+                        session
+get_cranlike_metadata_cache
+                        The R6 object that implements the global
+                        metadata cache
+get_graphics_api_version
+                        Query the version of the graphics API
+get_internals_id        Query UUID identifying the version of the R API
+meta_cache_deps         Query CRAN(like) package data
+package_cache           A simple package cache
+parse_installed         List metadata of installed packages
+parse_packages          Parse a repository metadata PACAKGES* file
+pkg_cache_summary       Functions to query and manipulate the package
+                        cache
+pkgcache-package        Cache for package data and metadata
+ppm_has_binaries        Does PPM build binary packages for the current
+                        platform?
+ppm_platforms           List all platforms supported by Posit Package
+                        Manager (PPM)
+ppm_r_versions          List all R versions supported by Posit Package
+                        Manager (PPM)
+ppm_repo_url            Returns the current Posit Package Manager (PPM)
+                        repository URL
+ppm_snapshots           List all available Posit Package Manager (PPM)
+                        snapshots
+repo_auth               Authenticated repositories
+repo_get                Query and set the list of CRAN-like
+                        repositories
+repo_status             Show the status of CRAN-like repositories
