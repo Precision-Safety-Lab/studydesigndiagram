@@ -4,7 +4,7 @@ library(jsonlite)
 library(svglite)
 library(base64enc)
 library(ggfittext)
-library(grid)
+library(textshaping)
 
 source("make-diagram.R")
 

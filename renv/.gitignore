@@ -1,3 +1,5 @@
+library/
+staging/
 local/
 cellar/
 lock/
