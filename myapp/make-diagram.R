@@ -3,8 +3,8 @@
 # Builds the longitudinal study-design ggplot from two data frames:
 #   plt     - one row per second-order anchor (interval / window box)
 #   indices - one row per first-order anchor (index date / vertical line)
-
-source("helpers.R")
+#
+# Expects helpers.R to have been sourced first (see app.R).
 
 gen_long_diag <- function(
   plt,
@@ -14,7 +14,8 @@ gen_long_diag <- function(
   xlim_min,
   xlim_max,
   hide_x_labels = FALSE,
-  hide_index_dates = FALSE
+  hide_index_dates = FALSE,
+  x_label = "Time (days)"
 ) {
   # --- Color handling (current hex values and legacy numeric indices) -----
 
@@ -37,7 +38,9 @@ gen_long_diag <- function(
   plt$minx[!is.finite(plt$minx)] <- min(plt$minx[is.finite(plt$minx)])
 
   plt$maxx <- plt$end
-  x_max_finite <- max(plt$maxx[is.finite(plt$maxx)])
+  # Starts are included so the right edge is still defined when every window
+  # is indefinite (all ends are Inf) and no explicit axis end is given
+  x_max_finite <- max(plt$maxx[is.finite(plt$maxx)], plt$minx[is.finite(plt$minx)])
   x_min_finite <- min(plt$minx[is.finite(plt$minx)])
 
   # Axis limits, computed first so infinite boxes can be clipped exactly to them
@@ -48,15 +51,22 @@ gen_long_diag <- function(
   # Infinite boxes extend exactly to the right axis edge
   plt$maxx[plt$end_inf] <- x_right
 
-  # Zero-length intervals: give them a small visible width
+  # First-order anchor band half-width. Scaled to the plotted x-range so it
+  # stays visible whether the diagram spans 10 days or 10 years, rather than
+  # a fixed number of days.
+  anchor_halfwidth <- max(x_range * 0.006, 1)
+
+  # Zero-length intervals: drawn as wide as an anchor band, so they stay
+  # visible at any x-range
   lwdth <- 0.8
   zero_len <- is.finite(plt$end) & (plt$end - plt$start == 0)
-  plt$minx[zero_len] <- plt$start[zero_len] - lwdth
-  plt$maxx[zero_len] <- plt$start[zero_len] + lwdth
 
   # Intervals touching time zero: extend slightly past the axis line
-  plt$maxx[is.finite(plt$end)   & plt$end   == 0] <-  lwdth
-  plt$minx[is.finite(plt$start) & plt$start == 0] <- -lwdth
+  plt$maxx[!zero_len & is.finite(plt$end)   & plt$end   == 0] <-  lwdth
+  plt$minx[!zero_len & is.finite(plt$start) & plt$start == 0] <- -lwdth
+
+  plt$minx[zero_len] <- plt$start[zero_len] - anchor_halfwidth
+  plt$maxx[zero_len] <- plt$start[zero_len] + anchor_halfwidth
 
   # Label x position: center of box
   plt$lblx <- plt$minx + abs(plt$maxx - plt$minx) / 2
@@ -76,10 +86,15 @@ gen_long_diag <- function(
 
   indices$indexlabel2[indices$indexlabel2 != ""] <- paste0("\n", indices$indexlabel2[indices$indexlabel2 != ""])
 
+  # Last line: "<date label> <index date>", e.g. "Day 0"; a blank date label
+  # leaves just the number
+  if (is.null(indices$datelabel)) indices$datelabel <- "Day"
+  date_line <- trimws(paste(trimws(indices$datelabel), indices$vlines))
+
   if (isTRUE(hide_index_dates)) {
     indices$indexlabel <- paste0(indices$indexlabel, indices$indexlabel2)
   } else {
-    indices$indexlabel <- paste0(indices$indexlabel, indices$indexlabel2, "\nDay ", indices$vlines)
+    indices$indexlabel <- paste0(indices$indexlabel, indices$indexlabel2, "\n", date_line)
   }
 
   # --- Split into inside-box and outside-box label sets ---------------------
@@ -98,14 +113,8 @@ gen_long_diag <- function(
   lbl_size     <- (txt_size / ggplot2::.pt)
   idx_lbl_size <- (txt_size / (14 / 5)) + 0.25
 
-  # --- First-order anchor band width ----------------------------------------
+  # --- First-order anchor coverage -----------------------------------------
   #
-  # The anchor band gets a small width (scaled to the plotted x-range, so it
-  # stays visible whether the diagram spans 10 days or 10 years) instead of a
-  # fixed number of days.
-
-  anchor_halfwidth <- max(x_range * 0.006, 1)
-
   # Where a box's interval reaches a first-order anchor day, widen its drawn
   # *fill* extent to at least the anchor's own width, so the box's color
   # completely covers the anchor there - no sliver of the anchor band left
@@ -219,7 +228,8 @@ gen_long_diag <- function(
       label.padding = unit(0.25, "lines"),
       inherit.aes   = FALSE
     ) +
-    xlab("Time (days)") +
+    # A blank label removes the axis title (and its space) entirely
+    xlab(if (nzchar(trimws(x_label))) x_label else NULL) +
     scale_x_continuous(
       expand = c(0, 0),
       limits = c(x_left, x_right),

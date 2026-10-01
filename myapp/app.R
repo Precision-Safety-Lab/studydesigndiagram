@@ -4,7 +4,6 @@ library(jsonlite)
 library(svglite)
 library(base64enc)
 library(ggfittext)
-library(textshaping)
 
 source("helpers.R")
 source("make-diagram.R")
@@ -13,7 +12,9 @@ license <- '<p xmlns:dct="http://purl.org/dc/terms/" xmlns:cc="http://creativeco
 
 # ---- UI builders for dynamically added rows --------------------------------
 
-make_row_inputs <- function(x, atype = 1, s = 0, e = 0) {
+# `pos` is the row's position in the list, which picks its default color (so
+# the first row is always the first color, however many ids have been used).
+make_row_inputs <- function(x, pos = 1, atype = 1, s = 0, e = 0) {
   select_default <- if (atype >= 1 && atype <= length(anchor2_choices)) anchor2_choices[[atype]] else anchor2_choices[[1]]
 
   tagList(
@@ -60,7 +61,7 @@ make_row_inputs <- function(x, atype = 1, s = 0, e = 0) {
             paste0("boxcolor", x),
             "Color",
             choices = box_colors,
-            selected = box_colors[((x - 1) %% length(box_colors)) + 1],
+            selected = box_colors[((pos - 1) %% length(box_colors)) + 1],
             width = "100%"
           )
         ),
@@ -161,14 +162,21 @@ make_index_inputs <- function(x, selected = NULL, idx = 0) {
           )
         ),
         column(
-          4,
+          3,
           tags$div(
             title = "Label for vertical line (line two)",
             textInput(paste0("indexlbl2_", x), "Optional sublabel", value = "")
           )
         ),
         column(
-          3,
+          2,
+          tags$div(
+            title = "Text shown before the index date on the last line of the label (e.g. Day, Week). Leave blank to show only the number.",
+            textInput(paste0("indexdatelbl_", x), "Date label", value = "Day")
+          )
+        ),
+        column(
+          2,
           tags$div(
             title = "Day for placement of vertical line (typically event date or cohort entry)",
             numericInput(paste0("index", x), "Index date", value = idx)
@@ -363,20 +371,33 @@ ui <- fluidPage(
   "use strict";
 
   // ---- Project state persistence (localStorage) ---------------------------
+  //
+  // Storage access is wrapped because it can throw (e.g. some private
+  // browsing modes); the app must still start, and answer the server,
+  // without it.
 
-  function saveProjectToStorage(text) {
-    localStorage.setItem("longdiag_state", text);
+  var STATE_KEY = "longdiag_state";
+
+  function readSavedState() {
+    try { return localStorage.getItem(STATE_KEY) || ""; } catch (e) { return ""; }
   }
 
+  function writeSavedState(text) {
+    try { localStorage.setItem(STATE_KEY, text); } catch (e) {}
+  }
+
+  // Always answers, with "" when nothing is saved: the server keeps the plot
+  // paused until it hears back, so the diagram is only drawn once at startup.
   Shiny.addCustomMessageHandler("request_cookie_state", function (_msg) {
-    var saved = localStorage.getItem("longdiag_state");
-    if (saved) {
-      Shiny.setInputValue("restore_state_cookie", saved, { priority: "event" });
-    }
+    Shiny.setInputValue("restore_state_cookie", readSavedState(), { priority: "event" });
   });
 
   Shiny.addCustomMessageHandler("save_state", function (state) {
-    saveProjectToStorage(JSON.stringify(state));
+    writeSavedState(JSON.stringify(state));
+  });
+
+  Shiny.addCustomMessageHandler("clear_saved_state", function (_msg) {
+    try { localStorage.removeItem(STATE_KEY); } catch (e) {}
   });
 
   Shiny.addCustomMessageHandler("restore_inputs_applied", function (_msg) {
@@ -385,6 +406,9 @@ ui <- fluidPage(
     }, 150);
   });
 
+  // The file is not written to storage here: the server saves the state
+  // itself once it has restored it, so an invalid file can never be stored
+  // and re-loaded on every visit.
   document.addEventListener("change", function (e) {
     var el = e.target;
     if (!el || el.id !== "load_project" || !el.files || !el.files.length) return;
@@ -392,27 +416,37 @@ ui <- fluidPage(
     var file = el.files[0];
     var reader = new FileReader();
     reader.onload = function (ev) {
-      var text = ev.target.result;
-      saveProjectToStorage(text);
-      Shiny.setInputValue("restore_state_upload", text, { priority: "event" });
+      Shiny.setInputValue("restore_state_upload", ev.target.result, { priority: "event" });
     };
     reader.readAsText(file);
   });
 
-  window.saveProject = function () {
-    var saved = localStorage.getItem("longdiag_state");
-    if (!saved) {
-      alert("Nothing to save yet.");
-      return;
-    }
-    var blob = new Blob([saved], { type: "application/json" });
+  // ---- Downloads ------------------------------------------------------------
+  //
+  // Files are built by the server only when a download button is clicked, and
+  // handed over here as a message (this works the same under Shinylive).
+
+  function downloadBlob(blob, filename) {
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    a.download = "longdiag_project.json";
+    a.download = filename;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
-  };
+    document.body.removeChild(a);
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  Shiny.addCustomMessageHandler("download_project", function (state) {
+    downloadBlob(new Blob([JSON.stringify(state)], { type: "application/json" }), "longdiag_project.json");
+  });
+
+  Shiny.addCustomMessageHandler("download_file", function (msg) {
+    var bytes = atob(msg.base64);
+    var buf = new Uint8Array(bytes.length);
+    for (var i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+    downloadBlob(new Blob([buf], { type: msg.mime }), msg.filename);
+  });
 
   // ---- Drag-to-reorder second-order anchor rows ----------------------------
 
@@ -566,6 +600,15 @@ ui <- fluidPage(
                   numericInput("textsize", "Text size", value = 14, min = 4, max = 32)
               ),
               div(class = "aligned-col",
+                  checkboxInput("hide_index_dates", "Remove first-order index dates", value = FALSE)
+              )
+            ),
+            # X-axis settings
+            div(class = "aligned-row",
+              div(class = "aligned-col",
+                  textInput("x_label", "X-axis label", value = "Time (days)")
+              ),
+              div(class = "aligned-col",
                   numericInput("xpad", "Padding (x-axis)", value = 50, min = 0, max = 300)
               ),
               div(class = "aligned-col",
@@ -575,10 +618,7 @@ ui <- fluidPage(
                   numericInput("xlim_max", "End of x-axis (optional)", value = NA)
               ),
               div(class = "aligned-col",
-                  checkboxInput("hide_x_labels", "Remove x-axis labels", value = FALSE)
-              ),
-              div(class = "aligned-col",
-                  checkboxInput("hide_index_dates", "Remove first-order index dates", value = FALSE)
+                  checkboxInput("hide_x_labels", "Remove x-axis ticks", value = FALSE)
               )
             ),
             div(
@@ -586,7 +626,7 @@ ui <- fluidPage(
 
               div(
                 tags$label("\u00a0", style = "display: block;"),
-                tags$button("Download project file", onclick = "saveProject()", class = "btn btn-default")
+                actionButton("save_project", "Download project file")
               ),
 
               div(
@@ -596,12 +636,12 @@ ui <- fluidPage(
 
               div(
                 tags$label("\u00a0", style = "display: block;"),
-                uiOutput("download_link")
+                actionButton("dl_pdf", "Print .pdf")
               ),
 
               div(
                 tags$label("\u00a0", style = "display: block;"),
-                uiOutput("download_link_svg")
+                actionButton("dl_svg", "Print .svg")
               )
             )
           )
@@ -630,13 +670,39 @@ ui <- fluidPage(
 server <- function(input, output, session) {
 
   is_restoring <- reactiveVal(FALSE)
-  plot_paused  <- reactiveVal(FALSE)
+
+  # Starts paused: the browser is asked for any saved state right after the
+  # first flush, and the plot is only drawn once that has been answered (and
+  # restored, if there was one) - not once with defaults and then again.
+  plot_paused <- reactiveVal(TRUE)
 
   observeEvent(input$restore_inputs_applied, {
     is_restoring(FALSE)
     plot_paused(FALSE)
     session$sendCustomMessage("refresh_row_order", list())
   }, ignoreInit = TRUE)
+
+  # Each dynamic row has an observer for its delete button. They're kept here
+  # so they can be destroyed together with their row, instead of lingering
+  # for the rest of the session.
+  make_observer_registry <- function() {
+    obs <- new.env(parent = emptyenv())
+    drop <- function(id) {
+      key <- as.character(id)
+      if (exists(key, envir = obs, inherits = FALSE)) {
+        obs[[key]]$destroy()
+        rm(list = key, envir = obs)
+      }
+    }
+    list(
+      add      = function(id, o) assign(as.character(id), o, envir = obs),
+      drop     = drop,
+      drop_all = function() for (key in ls(obs)) drop(key)
+    )
+  }
+
+  row_delete_obs   <- make_observer_registry()
+  index_delete_obs <- make_observer_registry()
 
   # ---- Second-order anchor (interval) row management -----------------------
   #
@@ -653,7 +719,7 @@ server <- function(input, output, session) {
   # alone does not reliably suppress. Guarding explicitly on NULL/0 avoids
   # a delete firing spuriously the moment a row is created.
   register_row_delete <- function(id) {
-    observe({
+    row_delete_obs$add(id, observe({
       val <- input[[paste0("delrow_", id)]]
       if (is.null(val) || val == 0) return()
 
@@ -662,10 +728,11 @@ server <- function(input, output, session) {
         if (length(ids) <= 1) return()  # always keep at least one row
 
         removeUI(selector = paste0("#row", id))
+        row_delete_obs$drop(id)
         row_order_ids(ids[ids != id])
         session$sendCustomMessage("refresh_row_order", list())
       })
-    })
+    }))
   }
   register_row_delete(1)
 
@@ -690,18 +757,21 @@ server <- function(input, output, session) {
 
   observeEvent(input$add, {
     new_id <- row_next_id()
+    ids <- row_order_ids()
 
-    insertUI(selector = "#row_container", where = "beforeEnd", ui = make_row_inputs(new_id))
+    insertUI(selector = "#row_container", where = "beforeEnd",
+             ui = make_row_inputs(new_id, pos = length(ids) + 1))
     register_row_delete(new_id)
 
     row_next_id(new_id + 1)
-    row_order_ids(c(row_order_ids(), new_id))
+    row_order_ids(c(ids, new_id))
 
     session$sendCustomMessage("refresh_row_order", list())
   })
 
   observeEvent(input$clearrows, {
     for (id in row_order_ids()) removeUI(selector = paste0("#row", id))
+    row_delete_obs$drop_all()
 
     new_id <- row_next_id()
     insertUI(selector = "#row_container", where = "beforeEnd", ui = make_row_inputs(new_id))
@@ -719,7 +789,7 @@ server <- function(input, output, session) {
   index_ids     <- reactiveVal(1L)
 
   register_index_delete <- function(id) {
-    observe({
+    index_delete_obs$add(id, observe({
       val <- input[[paste0("delidx_", id)]]
       if (is.null(val) || val == 0) return()
 
@@ -728,9 +798,10 @@ server <- function(input, output, session) {
         if (length(ids) <= 1) return()  # always keep at least one anchor
 
         removeUI(selector = paste0("#index_row_", id))
+        index_delete_obs$drop(id)
         index_ids(ids[ids != id])
       })
-    })
+    }))
   }
   register_index_delete(1)
 
@@ -746,6 +817,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$clearv, {
     for (id in index_ids()) removeUI(selector = paste0("#index_row_", id))
+    index_delete_obs$drop_all()
 
     new_id <- index_next_id()
     insertUI(selector = "#index_container", where = "beforeEnd", ui = make_index_inputs(new_id))
@@ -757,7 +829,7 @@ server <- function(input, output, session) {
 
   # ---- Project state: collect / save / restore -----------------------------
 
-  collect_state <- reactive({
+  current_state <- reactive({
     req(input$textsize, input$xpad, input$aratio)
 
     row_ids <- row_order_ids()
@@ -770,6 +842,7 @@ server <- function(input, output, session) {
       xlim_max = input$xlim_max,
       hide_x_labels = isTRUE(input$hide_x_labels),
       hide_index_dates = isTRUE(input$hide_index_dates),
+      x_label = input$x_label,
       rows = lapply(seq_along(row_ids), function(pos) {
         x <- row_ids[[pos]]
         list(
@@ -790,11 +863,15 @@ server <- function(input, output, session) {
         list(
           indexlbl1 = input[[paste0("indexlbl1_", x)]],
           indexlbl2 = input[[paste0("indexlbl2_", x)]],
+          indexdatelbl = input[[paste0("indexdatelbl_", x)]],
           index = input[[paste0("index", x)]]
         )
       })
     )
-  }) |> debounce(1000)
+  })
+
+  # Browser storage is only written once edits settle
+  collect_state <- debounce(current_state, 1000)
 
   session$onFlushed(function() {
     session$sendCustomMessage("request_cookie_state", list())
@@ -805,18 +882,49 @@ server <- function(input, output, session) {
     session$sendCustomMessage("save_state", collect_state())
   }, ignoreInit = TRUE)
 
+  # The project file is built from the live (not debounced) state, so it
+  # always includes the latest edit
+  observeEvent(input$save_project, {
+    session$sendCustomMessage("download_project", current_state())
+  })
+
+  # Parses and restores a project; never lets a bad file take the session
+  # down. `from_storage` marks the state saved in the browser: if that's the
+  # one that fails it's discarded, or it would fail again on every visit.
+  restore_from_json <- function(txt, from_storage = FALSE) {
+    tryCatch(
+      restore_state(normalize_state(fromJSON(txt, simplifyVector = FALSE))),
+      error = function(e) {
+        is_restoring(FALSE)
+        plot_paused(FALSE)
+        if (from_storage) {
+          session$sendCustomMessage("clear_saved_state", list())
+          msg <- "Your previous session could not be restored, so the app has started fresh."
+        } else {
+          msg <- paste0("Could not load the project file: ", conditionMessage(e))
+        }
+        showNotification(msg, type = "error", duration = 10)
+      }
+    )
+  }
+
   observeEvent(input$restore_state_upload, {
     req(input$restore_state_upload)
-    restore_state(fromJSON(input$restore_state_upload, simplifyVector = FALSE))
+    restore_from_json(input$restore_state_upload)
   }, ignoreInit = TRUE)
 
+  # Answered once at startup, with "" when nothing was saved
   observeEvent(input$restore_state_cookie, {
-    req(input$restore_state_cookie)
-    restore_state(fromJSON(input$restore_state_cookie, simplifyVector = FALSE))
+    if (!nzchar(input$restore_state_cookie)) {
+      plot_paused(FALSE)
+      return()
+    }
+    restore_from_json(input$restore_state_cookie, from_storage = TRUE)
   }, ignoreInit = FALSE)
 
+  # `state` must already have been through normalize_state(), so every field
+  # below is a single value of the right type.
   restore_state <- function(state) {
-    if (!is.list(state)) return()
     if (isTRUE(is_restoring())) return()
 
     is_restoring(TRUE)
@@ -830,32 +938,24 @@ server <- function(input, output, session) {
       }
     }, add = TRUE)
 
-    # Order rows top-to-bottom by their saved `line` value (highest first)
-    if (!is.null(state$rows) && length(state$rows) > 1) {
-      line_vals <- vapply(state$rows, function(r) {
-        if (is.null(r$line)) NA_real_ else suppressWarnings(as.numeric(r$line))
-      }, numeric(1))
+    n_rows <- length(state$rows)
+    n_idx  <- length(state$indices)
 
-      if (!all(is.na(line_vals))) {
-        state$rows <- state$rows[order(line_vals, decreasing = TRUE, na.last = TRUE)]
-      }
-    }
-
-    n_rows <- length(state$rows %||% list())
-    n_idx  <- length(state$indices %||% list())
-
-    updateNumericInput(session, "textsize", value = as.numeric(state$textsize %||% 14))
-    updateNumericInput(session, "xpad", value = as.numeric(state$xpad %||% 50))
-    updateNumericInput(session, "xlim_min", value = as.numeric(state$xlim_min))
-    updateNumericInput(session, "xlim_max", value = as.numeric(state$xlim_max))
-    updateCheckboxInput(session, "hide_x_labels", value = isTRUE(state$hide_x_labels %||% FALSE))
-    updateCheckboxInput(session, "hide_index_dates", value = isTRUE(state$hide_index_dates %||% FALSE))
-    updateSelectInput(session, "aratio", selected = as.character(state$aratio %||% 1))
+    updateNumericInput(session, "textsize", value = state$textsize)
+    updateNumericInput(session, "xpad", value = state$xpad)
+    updateNumericInput(session, "xlim_min", value = state$xlim_min)
+    updateNumericInput(session, "xlim_max", value = state$xlim_max)
+    updateCheckboxInput(session, "hide_x_labels", value = state$hide_x_labels)
+    updateCheckboxInput(session, "hide_index_dates", value = state$hide_index_dates)
+    updateTextInput(session, "x_label", value = state$x_label)
+    updateSelectInput(session, "aratio", selected = state$aratio)
 
     # Tear down all existing rows/indices, then rebuild with fresh ids so we
     # never reuse an id that might already have a delete-button observer.
     removeUI(selector = "#row_container > div", multiple = TRUE, immediate = TRUE)
     removeUI(selector = "#index_container > div", multiple = TRUE, immediate = TRUE)
+    row_delete_obs$drop_all()
+    index_delete_obs$drop_all()
 
     row_count <- max(1, n_rows)
     idx_count <- max(1, n_idx)
@@ -866,8 +966,9 @@ server <- function(input, output, session) {
     new_idx_ids <- seq(index_next_id(), length.out = idx_count)
     index_next_id(max(new_idx_ids) + 1)
 
-    for (x in new_row_ids) {
-      insertUI("#row_container", "beforeEnd", make_row_inputs(x), immediate = TRUE)
+    for (pos in seq_along(new_row_ids)) {
+      x <- new_row_ids[pos]
+      insertUI("#row_container", "beforeEnd", make_row_inputs(x, pos = pos), immediate = TRUE)
       register_row_delete(x)
     }
     for (x in new_idx_ids) {
@@ -880,99 +981,140 @@ server <- function(input, output, session) {
     session$sendCustomMessage("refresh_row_order", list())
 
     session$onFlushed(function() {
-      if (n_rows > 0) {
+      # Always hand control back (via restore_inputs_applied), even if
+      # something here fails, so the plot can't stay paused for good.
+      on.exit(session$sendCustomMessage("restore_inputs_applied", list()), add = TRUE)
+
+      tryCatch({
         for (pos in seq_len(n_rows)) {
           x <- new_row_ids[pos]
           r <- state$rows[[pos]]
 
-          lbl1_val <- as.character(r$lbl1)
-          lbl1_choices <- if (lbl1_val %in% anchor2_choices) anchor2_choices else c(anchor2_choices, setNames(lbl1_val, lbl1_val))
+          lbl1_choices <- if (r$lbl1 %in% anchor2_choices) anchor2_choices else c(anchor2_choices, setNames(r$lbl1, r$lbl1))
 
           updateSelectizeInput(session, paste0("lbl1_", x),
-            choices = lbl1_choices, selected = lbl1_val, options = list(create = TRUE))
-          updateTextInput(session, paste0("lbl2_", x), value = as.character(r$lbl2))
-          updateNumericInput(session, paste0("start", x), value = as.numeric(r$start))
-          updateNumericInput(session, paste0("end", x), value = as.numeric(r$end))
-          updateCheckboxInput(session, paste0("end_inf_", x), value = isTRUE(r$end_inf))
-          updateTextInput(session, paste0("start_lbl", x), value = as.character(r$start_lbl))
-          updateTextInput(session, paste0("end_lbl", x), value = as.character(r$end_lbl))
-          updateTextInput(session, paste0("days_lbl", x), value = as.character(r$days_lbl %||% ""))
-          updateSelectInput(session, paste0("outbox", x), selected = as.character(r$outbox))
-          updateSelectInput(session, paste0("boxcolor", x),
-            choices = box_colors, selected = resolve_box_color(r$boxcolor))
+            choices = lbl1_choices, selected = r$lbl1, options = list(create = TRUE))
+          updateTextInput(session, paste0("lbl2_", x), value = r$lbl2)
+          updateNumericInput(session, paste0("start", x), value = r$start)
+          updateNumericInput(session, paste0("end", x), value = r$end)
+          updateCheckboxInput(session, paste0("end_inf_", x), value = r$end_inf)
+          updateTextInput(session, paste0("start_lbl", x), value = r$start_lbl)
+          updateTextInput(session, paste0("end_lbl", x), value = r$end_lbl)
+          updateTextInput(session, paste0("days_lbl", x), value = r$days_lbl)
+          updateSelectInput(session, paste0("outbox", x), selected = r$outbox)
+          updateSelectInput(session, paste0("boxcolor", x), choices = box_colors, selected = r$boxcolor)
         }
-      }
 
-      if (n_idx > 0) {
         for (pos in seq_len(n_idx)) {
           x <- new_idx_ids[pos]
           idx <- state$indices[[pos]]
 
-          lbl1_val <- as.character(idx$indexlbl1)
-          lbl1_choices <- if (lbl1_val %in% anchor1_choices) anchor1_choices else c(anchor1_choices, setNames(lbl1_val, lbl1_val))
+          lbl1_choices <- if (idx$indexlbl1 %in% anchor1_choices) anchor1_choices else c(anchor1_choices, setNames(idx$indexlbl1, idx$indexlbl1))
 
           updateSelectizeInput(session, paste0("indexlbl1_", x),
-            choices = lbl1_choices, selected = lbl1_val, options = list(create = TRUE))
-          updateTextInput(session, paste0("indexlbl2_", x), value = as.character(idx$indexlbl2))
-          updateNumericInput(session, paste0("index", x), value = as.numeric(idx$index))
+            choices = lbl1_choices, selected = idx$indexlbl1, options = list(create = TRUE))
+          updateTextInput(session, paste0("indexlbl2_", x), value = idx$indexlbl2)
+          updateTextInput(session, paste0("indexdatelbl_", x), value = idx$indexdatelbl)
+          updateNumericInput(session, paste0("index", x), value = idx$index)
         }
-      }
-
-      session$sendCustomMessage("restore_inputs_applied", list())
+      }, error = function(e) {
+        showNotification(paste0("Parts of the project could not be restored: ", conditionMessage(e)),
+                         type = "warning", duration = 10)
+      })
     }, once = TRUE)
 
     restore_success <- TRUE
   }
 
   # ---- Plot data --------------------------------------------------------
+  #
+  # Everything the diagram depends on, gathered in one place. This must never
+  # throw: debounce() evaluates it inside an observer, where an error would
+  # end the session. Incomplete input - a number box that's empty or holds a
+  # lone "-" mid-typing (NA), or a just-added row whose inputs haven't arrived
+  # yet (NULL) - is flagged via `valid` instead, and the last good diagram is
+  # kept on screen until it's complete again.
 
-  ggdf <- reactive({
-    idx <- row_order_ids()
+  plot_inputs <- reactive({
+    row_ids <- row_order_ids()
+    idx_ids <- index_ids()
 
-    data.frame(
-      line = length(idx) - seq_along(idx) + 1,
-      lbl = vapply(idx, function(x) input[[paste0("lbl1_", x)]] %||% "", character(1)),
-      lbl2 = vapply(idx, function(x) input[[paste0("lbl2_", x)]] %||% "", character(1)),
-      outside_box = vapply(idx, function(x) input[[paste0("outbox", x)]] %||% "0", character(1)),
-      start = vapply(idx, function(x) input[[paste0("start", x)]] %||% 0, numeric(1)),
-      end = vapply(idx, function(x) input[[paste0("end", x)]] %||% 0, numeric(1)),
-      end_inf = vapply(idx, function(x) isTRUE(input[[paste0("end_inf_", x)]]), logical(1)),
-      start_lbl = vapply(idx, function(x) input[[paste0("start_lbl", x)]] %||% "", character(1)),
-      end_lbl = vapply(idx, function(x) input[[paste0("end_lbl", x)]] %||% "", character(1)),
-      days_lbl = vapply(idx, function(x) input[[paste0("days_lbl", x)]] %||% "", character(1)),
-      color = vapply(idx, function(x) input[[paste0("boxcolor", x)]] %||% box_colors[[1]], character(1)),
+    num_in <- function(id) as_num1(input[[id]])
+    chr_in <- function(id, default = "") as_chr1(input[[id]], default)
+
+    rows <- data.frame(
+      line = length(row_ids) - seq_along(row_ids) + 1,
+      lbl = vapply(row_ids, function(x) chr_in(paste0("lbl1_", x)), character(1)),
+      lbl2 = vapply(row_ids, function(x) chr_in(paste0("lbl2_", x)), character(1)),
+      outside_box = vapply(row_ids, function(x) chr_in(paste0("outbox", x), "0"), character(1)),
+      start = vapply(row_ids, function(x) num_in(paste0("start", x)), numeric(1)),
+      end = vapply(row_ids, function(x) num_in(paste0("end", x)), numeric(1)),
+      end_inf = vapply(row_ids, function(x) isTRUE(input[[paste0("end_inf_", x)]]), logical(1)),
+      start_lbl = vapply(row_ids, function(x) chr_in(paste0("start_lbl", x)), character(1)),
+      end_lbl = vapply(row_ids, function(x) chr_in(paste0("end_lbl", x)), character(1)),
+      days_lbl = vapply(row_ids, function(x) chr_in(paste0("days_lbl", x)), character(1)),
+      color = vapply(row_ids, function(x) chr_in(paste0("boxcolor", x), box_colors[[1]]), character(1)),
       stringsAsFactors = FALSE
+    )
+
+    indices <- data.frame(
+      vlines = vapply(idx_ids, function(x) num_in(paste0("index", x)), numeric(1)),
+      indexlabel = vapply(idx_ids, function(x) chr_in(paste0("indexlbl1_", x)), character(1)),
+      indexlabel2 = vapply(idx_ids, function(x) chr_in(paste0("indexlbl2_", x)), character(1)),
+      datelabel = vapply(idx_ids, function(x) chr_in(paste0("indexdatelbl_", x), "Day"), character(1)),
+      stringsAsFactors = FALSE
+    )
+
+    txt_size <- as_num1(input$textsize) - 2
+    addpad   <- as_num1(input$xpad)
+
+    list(
+      rows = rows,
+      indices = indices,
+      txt_size = txt_size,
+      addpad = addpad,
+      xlim_min = as_num1(input$xlim_min),
+      xlim_max = as_num1(input$xlim_max),
+      hide_x_labels = isTRUE(input$hide_x_labels),
+      hide_index_dates = isTRUE(input$hide_index_dates),
+      x_label = as_chr1(input$x_label, "Time (days)"),
+      valid = all(is.finite(rows$start)) &&
+        all(is.finite(rows$end) | rows$end_inf) &&
+        all(is.finite(indices$vlines)) &&
+        is.finite(txt_size) && txt_size > 0 &&
+        is.finite(addpad)
     )
   })
 
-  irows <- debounce(reactive(index_ids()), 500)
-
-  indf <- reactive({
-    idx <- irows()
-
-    data.frame(
-      vlines = vapply(idx, function(x) input[[paste0("index", x)]], numeric(1)),
-      indexlabel = vapply(idx, function(x) input[[paste0("indexlbl1_", x)]], character(1)),
-      indexlabel2 = vapply(idx, function(x) input[[paste0("indexlbl2_", x)]], character(1)),
-      stringsAsFactors = FALSE
+  build_plot <- function(args) {
+    gen_long_diag(
+      args$rows,
+      args$indices,
+      txt_size = args$txt_size,
+      addpad = args$addpad,
+      xlim_min = args$xlim_min,
+      xlim_max = args$xlim_max,
+      hide_x_labels = args$hide_x_labels,
+      hide_index_dates = args$hide_index_dates,
+      x_label = args$x_label
     )
-  })
+  }
+
+  # The on-screen preview waits for typing to settle before redrawing, so a
+  # burst of edits costs one render rather than one per keystroke
+  debounced_plot_inputs <- debounce(plot_inputs, 400)
 
   plt <- reactive({
-    gen_long_diag(
-      ggdf(),
-      indf(),
-      txt_size = input$textsize - 2,
-      addpad = input$xpad,
-      xlim_min = input$xlim_min,
-      xlim_max = input$xlim_max,
-      hide_x_labels = isTRUE(input$hide_x_labels),
-      hide_index_dates = isTRUE(input$hide_index_dates)
-    )
+    args <- debounced_plot_inputs()
+    # Also skip a value the inputs have already moved on from (e.g. when the
+    # plot is unpaused right after a restore): the debounce is about to
+    # deliver the settled one, so drawing this would just be thrown away.
+    req(args$valid, identical(args, isolate(plot_inputs())), cancelOutput = TRUE)
+    build_plot(args)
   })
 
   # 4:3 vs 16:9 export/preview dimensions, shared by the plot preview and both
-  # download handlers (previously the exports ignored this setting entirely).
+  # downloads.
   export_dims <- reactive({
     if (identical(as.character(input$aratio), "1")) c(w = 12, h = 9) else c(w = 16, h = 9)
   })
@@ -989,29 +1131,42 @@ server <- function(input, output, session) {
   }, width = function() export_dims()[["w"]] * 50, height = function() export_dims()[["h"]] * 50,
      res = 50)
 
-  output$download_link <- renderUI({
-    req(!isTRUE(plot_paused()), cancelOutput = TRUE)
+  # PDF/SVG are only built when their button is clicked (building them on
+  # every edit tripled the rendering work), from the live inputs so the file
+  # always matches the latest edit.
+  send_export <- function(device, mime) {
+    if (isTRUE(plot_paused())) return()
 
-    p <- plt()
+    args <- plot_inputs()
+    if (!isTRUE(args$valid)) {
+      showNotification("Fill in all start, end and index dates (and the text size) before exporting.",
+                       type = "warning")
+      return()
+    }
+
     dims <- export_dims()
-    tmp <- tempfile(fileext = ".pdf")
-    ggsave(tmp, plot = p, width = dims[["w"]], height = dims[["h"]], units = "in", device = "pdf")
+    tmp <- tempfile(fileext = paste0(".", device))
+    on.exit(unlink(tmp), add = TRUE)
 
-    href <- paste0("data:application/pdf;base64,", base64encode(tmp))
-    tags$a(href = href, download = "diagram.pdf", class = "btn btn-default", "Print .pdf")
-  })
+    ok <- tryCatch({
+      ggsave(tmp, plot = build_plot(args), width = dims[["w"]], height = dims[["h"]],
+             units = "in", device = device)
+      TRUE
+    }, error = function(e) {
+      showNotification(paste0("Export failed: ", conditionMessage(e)), type = "error")
+      FALSE
+    })
+    if (!ok) return()
 
-  output$download_link_svg <- renderUI({
-    req(!isTRUE(plot_paused()), cancelOutput = TRUE)
+    session$sendCustomMessage("download_file", list(
+      filename = paste0("diagram.", device),
+      mime = mime,
+      base64 = base64encode(tmp)
+    ))
+  }
 
-    p <- plt()
-    dims <- export_dims()
-    tmp <- tempfile(fileext = ".svg")
-    ggsave(tmp, plot = p, width = dims[["w"]], height = dims[["h"]], units = "in", device = "svg")
-
-    href <- paste0("data:image/svg+xml;base64,", base64encode(tmp))
-    tags$a(href = href, download = "diagram.svg", class = "btn btn-default", "Print .svg")
-  })
+  observeEvent(input$dl_pdf, send_export("pdf", "application/pdf"))
+  observeEvent(input$dl_svg, send_export("svg", "image/svg+xml"))
 }
 
 shinyApp(ui = ui, server = server)
