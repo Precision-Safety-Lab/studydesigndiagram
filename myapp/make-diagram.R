@@ -68,6 +68,27 @@ gen_long_diag <- function(
   plt$minx[zero_len] <- plt$start[zero_len] - anchor_halfwidth
   plt$maxx[zero_len] <- plt$start[zero_len] + anchor_halfwidth
 
+  # Keep boxes clear of first-order anchors outside their date range: e.g.
+  # [-365; -1] stops at the left edge of the band drawn for day 0, rather
+  # than running into it just because the band is wider than a day. (Boxes
+  # whose range does include an anchor day are widened to cover its band
+  # further down.) A box squeezed below the zero-length width is kept at
+  # that width, extending away from the anchor.
+  min_box_width <- 2 * anchor_halfwidth
+
+  for (a in indices$vlines) {
+    band_l <- a - anchor_halfwidth
+    band_r <- a + anchor_halfwidth
+
+    before <- plt$end < a & plt$maxx > band_l
+    plt$maxx[before] <- band_l
+    plt$minx[before] <- pmin(plt$minx[before], band_l - min_box_width)
+
+    after <- plt$start > a & plt$minx < band_r
+    plt$minx[after] <- band_r
+    plt$maxx[after] <- pmax(plt$maxx[after], band_r + min_box_width)
+  }
+
   # Label x position: center of box
   plt$lblx <- plt$minx + abs(plt$maxx - plt$minx) / 2
 
@@ -107,27 +128,31 @@ gen_long_diag <- function(
   plt_sml_l <- plt_sml[plt_sml$outside_box == 1, ]
   plt_sml_r <- plt_sml[plt_sml$outside_box == 2, ]
 
-  plt_sml_l$lbl_x <- plt_sml_l$start - abs_nudge
-  plt_sml_r$lbl_x <- plt_sml_r$end   + abs_nudge
+  # Placed off the drawn box edges (which may have been clipped clear of an
+  # anchor above); an indefinite box's right label stays pinned at the edge
+  plt_sml_l$lbl_x <- plt_sml_l$minx - abs_nudge
+  plt_sml_r$lbl_x <- ifelse(plt_sml_r$end_inf, Inf, plt_sml_r$maxx + abs_nudge)
 
   lbl_size     <- (txt_size / ggplot2::.pt)
   idx_lbl_size <- (txt_size / (14 / 5)) + 0.25
 
   # --- First-order anchor coverage -----------------------------------------
   #
-  # Where a box's interval reaches a first-order anchor day, widen its drawn
-  # *fill* extent to at least the anchor's own width, so the box's color
+  # Where a box's date range includes a first-order anchor day, widen its
+  # drawn *fill* extent to at least the anchor's own width, so the box's color
   # completely covers the anchor there - no sliver of the anchor band left
   # poking out, and (being fully opaque, see below) no bleed-through tint
   # either. Only the fill rectangle is widened: label/text positions still
   # use the box's own original extent, so text stays centered correctly.
+  # This goes by dates, not drawn extent: boxes that merely end next to an
+  # anchor were clipped clear of it above and must not be widened over it.
   plt$fill_minx <- plt$minx
   plt$fill_maxx <- plt$maxx
 
   for (a in indices$vlines) {
-    touches <- (plt$maxx > a - anchor_halfwidth) & (plt$minx < a + anchor_halfwidth)
-    plt$fill_minx[touches] <- pmin(plt$fill_minx[touches], a - anchor_halfwidth)
-    plt$fill_maxx[touches] <- pmax(plt$fill_maxx[touches], a + anchor_halfwidth)
+    covers <- plt$start <= a & plt$end >= a
+    plt$fill_minx[covers] <- pmin(plt$fill_minx[covers], a - anchor_halfwidth)
+    plt$fill_maxx[covers] <- pmax(plt$fill_maxx[covers], a + anchor_halfwidth)
   }
 
   # --- Index label staggering (avoid overlapping labels at the top) --------
