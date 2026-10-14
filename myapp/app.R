@@ -204,7 +204,18 @@ make_index_inputs <- function(x, selected = NULL, idx = 0) {
 ui <- fluidPage(
 
   tags$head(
-    tags$style(HTML('.aligned-row {
+    tags$style(HTML('/* The diagram is rendered at a fixed size (so it matches the PDF/SVG
+   exports); on smaller screens, scale it down to fit its column and the
+   window height instead of overflowing. It is never scaled up. */
+#longdiag img {
+  max-width: 100%;
+  height: auto;
+  max-height: calc(100vh - 140px);
+  object-fit: contain;
+  object-position: left top;
+}
+
+.aligned-row {
   display: flex;
   align-items: flex-end;
   gap: 10px;
@@ -655,7 +666,9 @@ ui <- fluidPage(
         5,
         br(),
         br(),
-        plotOutput("longdiag")
+        # "auto" lets the container follow the (scaled) image's height, rather
+        # than a fixed 400px the image would overflow onto the text below
+        plotOutput("longdiag", height = "auto")
       )
     )
   ),
