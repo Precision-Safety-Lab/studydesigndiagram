@@ -67,5 +67,7 @@ stopifnot(s$indices[[1]]$indexlbl1 == anchor1_choices[[1]], s$indices[[1]]$index
 stopifnot(s$x_label == "Time (days)", s$indices[[1]]$indexdatelbl == "Day")   # older files: defaults
 s2 <- normalize_state(list(x_label = "", indices = list(list(indexdatelbl = "Week"))))
 stopifnot(s2$x_label == "", s2$indices[[1]]$indexdatelbl == "Week")            # saved values kept, even blank
+stopifnot(is.na(s$x_tick_step))                                                # older files: automatic ticks
+stopifnot(normalize_state(list(rows = list(), x_tick_step = 365))$x_tick_step == 365)
 
 cat("All helper tests passed.\n")

@@ -116,6 +116,7 @@ normalize_state <- function(state) {
     xpad             = as_num1(state[["xpad"]], 50),
     xlim_min         = as_num1(state[["xlim_min"]]),
     xlim_max         = as_num1(state[["xlim_max"]]),
+    x_tick_step      = as_num1(state[["x_tick_step"]]),
     hide_x_labels    = isTRUE(state[["hide_x_labels"]]),
     hide_index_dates = isTRUE(state[["hide_index_dates"]]),
     # Older project files lack these; a saved "" (deliberately blank) is kept

@@ -15,7 +15,8 @@ gen_long_diag <- function(
   xlim_max,
   hide_x_labels = FALSE,
   hide_index_dates = FALSE,
-  x_label = "Time (days)"
+  x_label = "Time (days)",
+  x_tick_step = NA
 ) {
   # --- Color handling (current hex values and legacy numeric indices) -----
 
@@ -50,6 +51,12 @@ gen_long_diag <- function(
 
   # Infinite boxes extend exactly to the right axis edge
   plt$maxx[plt$end_inf] <- x_right
+
+  # Optional fixed tick interval: ticks at its multiples, so day 0 is always
+  # one (e.g. 365 gives ..., -365, 0, 365, ...). Ignored in favour of the
+  # automatic ticks when blank, not positive, or so small it would crowd the
+  # axis with more than 100 ticks.
+  use_tick_step <- isTRUE(is.finite(x_tick_step) && x_tick_step > 0 && x_range / x_tick_step <= 100)
 
   # First-order anchor band half-width. Scaled to the plotted x-range so it
   # stays visible whether the diagram spans 10 days or 10 years, rather than
@@ -259,7 +266,13 @@ gen_long_diag <- function(
       expand = c(0, 0),
       limits = c(x_left, x_right),
       breaks = function(x) {
-        b <- scales::breaks_pretty()(x)
+        b <- if (use_tick_step) {
+          from <- ceiling(x_left / x_tick_step)
+          to   <- floor(x_right / x_tick_step)
+          if (from > to) numeric(0) else round(seq(from, to) * x_tick_step, 10)
+        } else {
+          scales::breaks_pretty()(x)
+        }
         b[b < x_right]
       }
     ) +

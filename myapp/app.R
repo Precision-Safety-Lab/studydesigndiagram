@@ -618,6 +618,10 @@ ui <- fluidPage(
                   numericInput("xlim_max", "End of x-axis (optional)", value = NA)
               ),
               div(class = "aligned-col",
+                  title = "Distance between x-axis ticks, e.g. 365 for yearly ticks. Ticks are placed at multiples of it (so day 0 is always one). Leave blank for automatic ticks.",
+                  numericInput("x_tick_step", "Tick interval (optional)", value = NA, min = 0)
+              ),
+              div(class = "aligned-col",
                   checkboxInput("hide_x_labels", "Remove x-axis ticks", value = FALSE)
               )
             ),
@@ -840,6 +844,7 @@ server <- function(input, output, session) {
       aratio = input$aratio,
       xlim_min = input$xlim_min,
       xlim_max = input$xlim_max,
+      x_tick_step = input$x_tick_step,
       hide_x_labels = isTRUE(input$hide_x_labels),
       hide_index_dates = isTRUE(input$hide_index_dates),
       x_label = input$x_label,
@@ -945,6 +950,7 @@ server <- function(input, output, session) {
     updateNumericInput(session, "xpad", value = state$xpad)
     updateNumericInput(session, "xlim_min", value = state$xlim_min)
     updateNumericInput(session, "xlim_max", value = state$xlim_max)
+    updateNumericInput(session, "x_tick_step", value = state$x_tick_step)
     updateCheckboxInput(session, "hide_x_labels", value = state$hide_x_labels)
     updateCheckboxInput(session, "hide_index_dates", value = state$hide_index_dates)
     updateTextInput(session, "x_label", value = state$x_label)
@@ -1075,6 +1081,7 @@ server <- function(input, output, session) {
       addpad = addpad,
       xlim_min = as_num1(input$xlim_min),
       xlim_max = as_num1(input$xlim_max),
+      x_tick_step = as_num1(input$x_tick_step),
       hide_x_labels = isTRUE(input$hide_x_labels),
       hide_index_dates = isTRUE(input$hide_index_dates),
       x_label = as_chr1(input$x_label, "Time (days)"),
@@ -1094,6 +1101,7 @@ server <- function(input, output, session) {
       addpad = args$addpad,
       xlim_min = args$xlim_min,
       xlim_max = args$xlim_max,
+      x_tick_step = args$x_tick_step,
       hide_x_labels = args$hide_x_labels,
       hide_index_dates = args$hide_index_dates,
       x_label = args$x_label
